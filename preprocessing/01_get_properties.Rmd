@@ -7,13 +7,13 @@ output: html_document
 
 # Setup
 
-```{r, message = F}
+```{r setup, message = F}
 library(dplyr)
 ```
 
 Define function to make SQL queries with the City's [carto API](https://cityofphiladelphia.github.io/carto-api-explorer/#real_estate_tax_balances).
 
-```{r}
+```{r api-function}
 get_philly_data <- function(query,
                             api_url = 'https://phl.carto.com/api/v2/sql'){
   # Create URL
@@ -29,24 +29,27 @@ get_philly_data <- function(query,
 
 Test the function
 
-```{r}
-paste(
-  'SELECT',
-  '*',
-  'FROM opa_properties_public',
-  'limit 2') %>%
+```{r test-function}
+cols <- c('parcel_number', 'street_code', 'street_designation', 'street_direction', 'street_name')
+sprintf(
+  'SELECT %s FROM opa_properties_public limit 2',
+  paste(cols, collapse = ',')) %>%
   get_philly_data %>%
-  select(parcel_number, street_code, street_designation, street_direction, street_name) %>%
   knitr::kable()
 ```
 
 Get unique parcel numbers
 
-```{r}
+```{r get-parcels}
 parcels <- get_philly_data('SELECT parcel_number FROM opa_properties_public')
 
 head(parcels)
 nrow(parcels)
 ```
 
+# Save out
+
+```{r save-out}
+readr::write_csv(parcels, file.path('..', 'data', 'parcels.csv'))
+```
 
