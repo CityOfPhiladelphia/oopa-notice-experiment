@@ -1,0 +1,52 @@
+---
+title: "Get city property list"
+author: "Nathaniel Olin"
+date: "`r Sys.time()`"
+output: html_document
+---
+
+# Setup
+
+```{r, message = F}
+library(dplyr)
+```
+
+Define function to make SQL queries with the City's [carto API](https://cityofphiladelphia.github.io/carto-api-explorer/#real_estate_tax_balances).
+
+```{r}
+get_philly_data <- function(query,
+                            api_url = 'https://phl.carto.com/api/v2/sql'){
+  # Create URL
+  url <- URLencode(sprintf('%s?q=%s', api_url, query))
+  res <- jsonlite::fromJSON(RCurl::getURLContent(url))
+
+  # Return
+  as.data.frame(res$rows)
+}
+```
+
+# Get data
+
+Test the function
+
+```{r}
+paste(
+  'SELECT',
+  '*',
+  'FROM opa_properties_public',
+  'limit 2') %>%
+  get_philly_data %>%
+  select(parcel_number, street_code, street_designation, street_direction, street_name) %>%
+  knitr::kable()
+```
+
+Get unique parcel numbers
+
+```{r}
+parcels <- get_philly_data('SELECT parcel_number FROM opa_properties_public')
+
+head(parcels)
+nrow(parcels)
+```
+
+
