@@ -149,5 +149,5 @@ knitr::kable(head(dat))
 # Write out datasets
 
 ```{r write full dataset}
-readr::write_csv(dat, file.path('..', 'data', 'OOPA_report_v2.csv'))
+readr::write_csv(dat, file.path('..', 'data', 'OOPA_report_clean.csv'))
 ```
