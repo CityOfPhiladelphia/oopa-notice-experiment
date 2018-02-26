@@ -1,0 +1,97 @@
+---
+title: "Power Calculations for OOPA defaults"
+author: "Nathaniel Olin"
+date: "`r Sys.Date()`"
+output: 
+  html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This script calculates experimental power, assuming 500 material breach notices sent per month.
+
+```{r setup, warning = FALSE, message = F}
+library(dplyr)
+library(ggplot2)
+```
+
+# Power calculations
+
+What is the smallest effect we could detect, depending on our sample size?
+
+## Assumptions
+
+50% in treatment group
+```{r}
+treat_prop <- 0.5
+```
+
+500 notices per month (conservative, based on February 2018)
+
+```{r}
+n_month <- 500
+```
+
+Default rate in program to date
+
+```{r, message = F}
+dat <- readr::read_csv(file.path('..', 'data', 'OOPA_report_clean.csv'))
+baseline_rate <- mean(dat$status == '530 Defaulted')
+baseline_rate
+```
+
+We don't have much information to predict defaults beyond what tier of the program people are in, which is not very predictive (more information on income and the total amount of delinquent taxes could improve this)
+
+```{r}
+r2 <- summary(lm(
+  !is.na(default_dt) ~ as.factor(tier), data = dat
+))[['r.squared']]
+r2
+```
+
+## Calculations
+
+Souce: Gelman, [Sample size and power calculations](http://www.stat.columbia.edu/~gelman/stuff_for_blog/chap20.pdf)
+
+* $\bar{d}$ is the baseline default rate
+* $\bar{\tau}$ is the percent of observations assigned to treatment
+* $\alpha$ is desired confidence level, and $\beta$ is the desired false negative rate (so $1-\beta$ is the statistical power)
+* $C_x$ is the critical value of a normal distribution with proportion $x$ of the density in the lower tail (`qnorm` in R).
+
+\[MDE = \left( \frac{\bar{d}(1 - \bar{d})(1 - R^2)}{\bar{\tau}(1-\bar{\tau}) \cdot n} \right) (C_{1-\beta} + C_\alpha)\]
+
+```{r, echo = F}
+source('power_calc.R')
+
+powerdat <- data.frame(
+  month = rep(1:12, 2),
+  n = c(n_month * 1:12, n_month * 3 * 1:12))
+
+powerdat$mde <- powerb(
+  total_n = powerdat$n,
+  percent_treat = treat_prop,
+  base_level = baseline_rate,
+  r_sq = r2) %>% 
+  .[["intent to treat MDE"]]
+
+powerdat$label <- sprintf(
+  "Assuming %s threat notices per month\n%s",
+  scales::comma(powerdat$n / rep(1:12, 2)),
+  rep(c('(Revenue data only)', '(Revenue & outside counsel)'), each = 12))
+```
+
+```{r, echo = F}
+ggplot(powerdat,
+       aes(x = month, y = mde)) +
+  geom_line() +
+  geom_hline(yintercept = 0, color = 'gray') +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = 1:12) +
+  facet_wrap(~ label) +
+  labs(x = "Months of experiment", y = "Minimum detectable effect",
+       title = "Decrease in default rate we can identify",
+       subtitle = sprintf(
+         "Assuming a baseline rate of %s defaulting, %s in treatment, and R2 of %s for non-treatment variables", 
+         scales::percent(baseline_rate), scales::percent(treat_prop), round(r2, 2)))
+```
+
