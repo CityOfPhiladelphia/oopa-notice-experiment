@@ -19,6 +19,8 @@ OOPA data (for balancing randomization and measuring outcome) is confidential.
 
 ## Directory structure
 
-* `preprocessing` contains Rmd scripts which clean raw data into files for randomization and/or analysis.
-* `randomization` contains Rmd scripts which generate treatment assignments for 
-* `analysis` contains Rmd scripts which merge outcome data and randomization data, and measure the effects of the experimental treatments.
+* `preprocessing` contains scripts to clean raw data into files for randomization and/or analysis.
+* `randomization` contains scripts to generate treatment assignments for properties in the city and checks balance.
+* `analysis` contains
+    * Pre-experiment exploration of data and power calculations, and
+    * Scripts to merge outcome data and randomization data, and measure the effects of the experimental treatments.
