@@ -1,0 +1,153 @@
+---
+title: "Clean OOPA report"
+author: "Nathaniel Olin"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+This script cleans the case-level OOPA report data from 2013 to 2017.
+
+```{r setup, warning = F, message = F}
+library(dplyr)
+# Function to look at raw data without breaking text wrapping
+vis <- function(x, width = 100) substring(x, 1, width)
+```
+
+# Load raw text data
+
+```{r load text}
+raw <- readLines(file.path('..', 'data', 'raw', 'OOPA1317 - v2.txt'))
+length(raw)
+vis(head(raw))
+vis(tail(raw))
+```
+
+# Clean raw data
+
+## Remove leading tables
+
+```{r remove tables}
+first_header <- which(grepl(
+  "TIER 1 PAYMENT DETAIL 20131001 THRU 20171231",
+  raw
+))[1]
+
+raw <- raw[first_header:length(raw)]
+
+vis(head(raw, 10))
+```
+
+## Remove pagination
+
+```{r remove pages}
+# Drop lines that are only " " or "-"
+raw <- raw[!grepl("^[ -]*$", raw)]
+
+# Drop lines that are page numbers
+raw <- raw[!grepl("Page *[0-9]", raw)]
+```
+
+## Clean headers
+
+```{r clean headers}
+raw[2]
+headers <- paste(
+  "case",
+  "brt",
+  "num_pmts",
+  "status",
+  "new_agree",
+  "agree_start",
+  "default_dt",
+  "complete_dt",
+  "prin_paid",
+  "int_paid",
+  "pen_paid",
+  "oth_paid",
+  sep = ","
+)
+
+# remove header lines
+raw <- raw[!grepl("CASE", raw)]
+# remove error sum line
+raw <- raw[!grepl("TOTAL NUMBER OF ERRORS", raw)]
+
+# add headers back on
+raw <- c(headers, raw)
+
+vis(head(raw))
+vis(tail(raw))
+```
+
+## Clean delimiters
+
+```{r clean delimeters}
+# delete leading and trailing whitespace
+raw <- gsub("^ *| *$", "", raw)
+
+# replace any amount of remaining whitespace with a comma
+raw <- gsub(" +", ",", raw)
+
+vis(head(raw))
+```
+
+## Code OOPA tier
+
+```{r code tier}
+# add tier to header
+raw[1] <- paste(raw[1], 'tier', sep = ',')
+
+# add tier indicated by page header to subsequent lines
+tier <- 0
+for(i in 2:length(raw)){
+  if(substring(raw[i], 1, 4) == 'TIER' &
+       tier != substring(raw[i], 6, 6))
+    tier <- substring(raw[i], 6, 6)
+  raw[i] <- paste(raw[i], tier, sep = ',')
+}
+
+# remove page headers
+raw <- raw[!grepl(
+  "TIER,[1-4],PAYMENT,DETAIL,20131001,THRU,20171231",
+  raw)]
+```
+
+# Convert to tabular format
+
+```{r make tabular}
+dat <- read.table(
+  text = paste(raw, sep = '\n'),
+  sep = ',',
+  header = T,
+  stringsAsFactors = F
+)
+
+knitr::kable(head(dat))
+```
+
+# Additional Cleaning
+
+## Format dates
+
+```{r format dates}
+# Dates of "0" are NA
+dat$default_dt[dat$default_dt == 0] <- NA
+dat$complete_dt[dat$complete_dt == 0] <- NA
+
+# Convert to consistent YMD format
+dat <- dat %>%
+  mutate(
+    tier = as.factor(tier),
+    agree_start = lubridate::mdy(agree_start),
+    default_dt = lubridate::ymd(default_dt),
+    complete_dt = lubridate::ymd(complete_dt)
+  )
+
+knitr::kable(head(dat))
+```
+
+# Write out datasets
+
+```{r write full dataset}
+readr::write_csv(dat, file.path('..', 'data', 'OOPA_report_v2.csv'))
+```
