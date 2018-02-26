@@ -28,7 +28,7 @@ vis(tail(raw))
 
 ```{r remove tables}
 first_header <- which(grepl(
-  "TIER 1 PAYMENT DETAIL 20131001 THRU 20171231",
+  "TIER 1 PAYMENT DETAIL [0-9]* THRU [0-9]*",
   raw
 ))[1]
 
@@ -108,7 +108,7 @@ for(i in 2:length(raw)){
 
 # remove page headers
 raw <- raw[!grepl(
-  "TIER,[1-4],PAYMENT,DETAIL,20131001,THRU,20171231",
+  "TIER,[1-4],PAYMENT,DETAIL,[0-9]*,THRU,[0-9]*",
   raw)]
 ```
 
@@ -144,6 +144,38 @@ dat <- dat %>%
   )
 
 knitr::kable(head(dat))
+```
+
+## Readable Status Codes
+
+```{r}
+dat <- dat %>%
+  mutate(status = recode(
+    status,
+    '520' = '520 Ongoing',
+    '530' = '530 Defaulted',
+    '560' = '560 Completed'))
+
+# Verify status codes match dates
+table(status_code = dat$status, 
+      no_end_dates = is.na(dat$default_dt) & 
+        is.na(dat$complete_dt), 
+      useNA = 'ifany')
+table(status_code = dat$status,
+      default_dt = !is.na(dat$default_dt))
+table(status_code = dat$status,
+      complete_dt_dt = !is.na(dat$complete_dt))
+```
+
+## Sanity check
+
+Agreements by status and tier
+
+```{r}
+addmargins(table(
+  status = dat$status, 
+  tier = dat$tier, 
+  useNA = 'ifany'))
 ```
 
 # Write out datasets
