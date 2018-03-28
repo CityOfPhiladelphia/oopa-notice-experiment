@@ -5,7 +5,7 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
-This script cleans the case-level OOPA report data from 2013 to 2017.
+This script cleans the case-level OOPA report data from 2013 to February 2018
 
 ```{r setup, warning = F, message = F}
 library(dplyr)
@@ -16,7 +16,7 @@ vis <- function(x, width = 100) substring(x, 1, width)
 # Load raw text data
 
 ```{r load text}
-raw <- readLines(file.path('..', 'data', 'raw', 'OOPA1317 - v2.txt'))
+raw <- readLines(file.path('..', 'data', 'raw', 'OOPA1318.txt'))
 length(raw)
 vis(head(raw))
 vis(tail(raw))
@@ -164,7 +164,7 @@ table(status_code = dat$status,
 table(status_code = dat$status,
       default_dt = !is.na(dat$default_dt))
 table(status_code = dat$status,
-      complete_dt_dt = !is.na(dat$complete_dt))
+      complete_dt = !is.na(dat$complete_dt))
 ```
 
 ## Sanity check
