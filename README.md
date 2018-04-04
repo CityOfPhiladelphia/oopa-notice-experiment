@@ -14,8 +14,8 @@ While Philadelphia property tax data is public, OOPA status is not, so the rando
 
 ## Data sources
 
-City property data is pulled from the City of Philadelphia [carto API](https://www.opendataphilly.org/dataset/property-tax-balances).
-OOPA data (for balancing randomization and measuring outcome) is confidential.
+City property data and OOPA data is pulled from city mainframes.
+OOPA data (for balancing randomization and measuring outcome) is confidential, and cannot be posted here.
 
 ## Directory structure
 
