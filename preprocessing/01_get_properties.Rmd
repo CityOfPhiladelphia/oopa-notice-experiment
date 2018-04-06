@@ -3,6 +3,8 @@ title: "Get city property list"
 author: "Nathaniel Olin"
 date: "`r Sys.time()`"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, message = F}
