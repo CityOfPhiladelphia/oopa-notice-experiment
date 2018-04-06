@@ -2,182 +2,34 @@
 title: "OOPA Risk of Material Breach Randomization"
 author: "Nathaniel Olin"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
 editor_options: 
   chunk_output_type: console
 ---
 
+This script randomly assigns all BRTs in the City of Philadelphia to receive either old letters or new letters (50-50 split), and exports
+
+* A timestamped file of the randomization for backup purposes, and
+* A skinny `rando.csv` file with BRT and treatment assignment.
+
+```{r, include = F}
+options(cli.width = 100)
+```
+
 ```{r}
 library(tidyverse)
-library(randomizr)
-
-set.seed(100)
 ```
 
-# Load data
-
-Load full list of BRTs and address data.
 
 ```{r}
-full <- read_csv(file.path('..', 'data', 'parcels.csv'))
-# Convert BRT to integer to drop leading zeroes, for matching
-table(nchar(full$brt))
-full$brt <- as.integer(full$brt)
-table(nchar(full$brt))
+dat <- read_csv(file.path('..', 'data', 'basefile.csv'))
+dat$property_zip5 <- as.character(dat$property_zip5)
 ```
-
-Load OOPA case-level data
-
-```{r}
-oopa <- read_csv(file.path('..', 'data', 'OOPA_report_clean.csv'))
-```
-
-## Data quality checks
-
-BRT number should be unique
-
-```{r}
-stopifnot(!duplicated(full$brt))
-```
-
-Case should be unique on OOPA file
-
-```{r}
-stopifnot(!duplicated(oopa$case))
-```
-
-## Merge
-
-```{r}
-c('BRT rows' = nrow(full),
-  'BRT unique' = length(unique(full$brt)),
-  'OOPA rows' = nrow(oopa),
-  'OOPA unique' = length(unique(oopa$brt)))
-
-dat <- full_join(oopa, full, by = 'brt')
-c('Final rows' = nrow(dat),
-  'Final unique BRT' = length(unique(dat$brt)))
-```
-
-```{r}
-c('Final dataset' = nrow(dat),
-  'In both datasets' = sum(dat$brt %in% oopa$brt & dat$brt %in% full$brt),
-  'In OOPA not BRT (0?)' = sum(dat$brt %in% oopa$brt & ! dat$brt %in% full$brt),
-  'In BRT not OOPA (big)' = sum(dat$brt %in% full$brt & ! dat$brt %in% oopa$brt))
-
-stopifnot(full$brt %in% dat$brt,
-          oopa$brt %in% dat$brt)
-```
-
-It's OK if the "in OOPA but not BRT" cases are mostly complete.
-
-```{r}
-table(
-  `Status` = dat$status,
-  `In OOPA, not BRT` = dat$brt %in% oopa$brt & ! dat$brt %in% full$brt)
-
-dat %>% filter(status == '520 Ongoing' &
-                 brt %in% oopa$brt & 
-                 ! brt %in% full$brt)
-```
-
-```{r}
-rm(oopa, full)
-```
-
-# Collapse to BRT level
-
-How many BRTs appear more than once?
-
-```{r}
-dat %>%
-  filter(duplicated(brt)) %>%
-  select(brt) %>% unique() %>% nrow()
-```
-
-If there are multiple cases with the same BRT:
-
-* If only one is ongoing, take that.
-* If none are ongoing, take the most recent one.
-* If multiple are ongoing, check the data / report - shouldn't be possible.
-
-```{r}
-dat <- dat %>%
-  mutate(active = status == '520 Ongoing') %>%
-  arrange(brt, desc(active), desc(agree_start)) %>%
-  group_by(brt) %>%
-  mutate(brt_rank = 1:n()) %>%
-  ungroup()
-
-dat %>% 
-  filter(brt %in% dat$brt[duplicated(dat$brt)]) %>%
-  select(brt, agree_start, brt_rank)
-```
-
-```{r}
-reject <- subset(dat, !is.na(brt) & brt_rank > 1)
-
-# Did any active OOPAs get kicked out when de-duplicating by BRT?
-table(reject$status)
-dat[dat$brt %in% reject$brt[reject$status == '520 Ongoing'], ]
-# Not enough to matter
-```
-
-Deduplicate
-
-```{r}
-dat <- subset(dat, is.na(brt) | brt_rank == 1)
-
-stopifnot(!duplicated(dat$brt))
-dat$brt_rank <- NULL
-dat$active <- NULL
-```
-
-# New variables
-
-* Current OOPA status
-    * Not in OOPA
-    * Currently in OOPA, good standing
-    * Currently in OOPA, in material breach
-    * Previously in OOPA, completed
-    * Previously in OOPA, defaulted
-    
-```{r}
-dat$status[is.na(dat$status)] <- 'Not in OOPA'
-
-# Did people fall behind on payments?
-dat$last_date <- as.Date(NA)
-dat$last_date[!is.na(dat$default_dt)] <- dat$default_dt[!is.na(dat$default_dt)]
-dat$last_date[!is.na(dat$complete_dt)] <- dat$complete_dt[!is.na(dat$complete_dt)]
-dat$last_date[is.na(dat$last_date) & !is.na(dat$case)] <- Sys.Date()
-
-dat <- dat %>%
-  mutate(months_in_agree = 
-           (lubridate::year(last_date) * 12 + lubridate::month(last_date)) -
-           (lubridate::year(agree_start) * 12 + lubridate::month(agree_start)),
-         num_diff = months_in_agree - num_pmts)
-
-dat$status[dat$status == '520 Ongoing' & 
-             dat$num_diff > 1] <- '520 Ongoing, Breached'
-```
-
-Add in missing values in stratification variables (or drop when small)
-
-```{r}
-dat$tier[is.na(dat$tier)] <- 'Missing'
-
-table(missing_mail = is.na(dat$different_mail), 
-      in_oopa = is.na(dat$case))
-# Drop these records
-dat <- subset(dat, !is.na(different_mail))
-
-table(missing_zip = is.na(dat$property_zip5),
-      in_oopa = is.na(dat$case))
-# Don't want to drop active OOPA cases so
-dat$property_zip5[is.na(dat$property_zip5)] <- 'Missing'
-```
-
-
 
 # Set up randomization
 
@@ -192,13 +44,15 @@ conditions <- c('Control', 'New Letter')
 block_var <- c('status', 'tier', 'property_zip5', 'different_mail')
 ```
 
-## Distribution of block variables
+## Check distribution of block variables
 
 ```{r}
-for(i in seq_along(block_var)){
+qplot(dat$property_zip5) + coord_flip()
+
+for(i in c(1, 2, 4)){
   p <- dat %>%
     filter(!is.na(case)) %>%
-    ggplot(aes_string(block_var[i])) + geom_bar() + coord_flip()
+    ggplot(aes_string(block_var[i])) + geom_bar()
   print(p)
 }
 ```
@@ -220,31 +74,36 @@ dat$treat <- randomizr::block_ra(blocks = dat$block,
 
 ## Checks
 
-Counts / proportions
-
-```{r}
-addmargins(table(dat$block, dat$treat))
-prop.table(table(dat$block, dat$treat), margin = 1)
-```
-
-Block size
+Proportion of sample in small strata
 
 ```{r}
 dat %>%
   group_by(block) %>%
   summarize(block_size = n()) %>%
   ungroup() %>%
-  arrange(block_size) %>%
-  mutate(prop = block_size / sum(block_size),
-         cumul_prop = cumsum(prop)) %>%
-  print()
+  group_by(block_size) %>%
+  summarize(
+    n_strata = n(),
+    n_in_block = sum(block_size)) %>%
+  ungroup() %>%
+  mutate(prop = n_in_block / sum(n_in_block),
+         cumul_prop = scales::percent(cumsum(prop))) %>%
+  select(block_size, cumul_prop) %>%
+  filter(block_size %in% c(1, 2, 3, 5, 10)) %>%
+  knitr::kable(col.names = c(
+    'Block size',
+    'Prop. in blocks $\\leq$ block size'),
+    format = 'html') %>%
+  kableExtra::kable_styling(full_width = F)
 ```
 
 Balance
 
-```{r}
+```{r, fig.width = 5, fig.height = 8}
 f <- as.formula(sprintf('treat ~ %s', paste(block_var, collapse = ' + ')))
 bal_check <- glm(formula = f, data = dat, family = binomial(link = 'logit'))
+
+summary(bal_check)
 
 z <- qnorm(0.975)
 

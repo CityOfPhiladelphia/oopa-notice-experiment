@@ -1,14 +1,18 @@
 ---
 title: "Clean OOPA report"
 author: "Nathaniel Olin"
-date: "`r Sys.Date()`"
+date: "`r date()`"
 output: html_document
 ---
 
 This script cleans the case-level OOPA report data from 2013 to February 2018
 
+```{r, include = F}
+options(cli.width = 100)
+```
+
 ```{r setup, warning = F, message = F}
-library(dplyr)
+library(tidyverse)
 # Function to look at raw data without breaking text wrapping
 vis <- function(x, width = 100) substring(x, 1, width)
 ```
@@ -181,5 +185,5 @@ addmargins(table(
 # Write out datasets
 
 ```{r write full dataset}
-readr::write_csv(dat, file.path('..', 'data', 'OOPA_report_clean.csv'))
+write_csv(dat, file.path('..', 'data', 'OOPA_report_clean.csv'))
 ```

@@ -2,7 +2,7 @@
 
 ## Data sources
 
-* List of active BRT numbers (one number per property parcel in the city) and address from TIPS export (`data/raw/path-to-file.csv`) cleaned into `parcels.csv`
+* List of active BRT numbers (one number per property parcel in the city) and address from TIPS export (`data/raw/BRT_with_Address.csv`) cleaned into `parcels.csv`
 * Current OOPA status and tier agreement from OOPA annual report dated February 14th, 2018 (`data/raw/OOPA1317 - v2.txt`), cleaned into `data/OOPA_report_clean.csv`
 
 ## Universe information
@@ -25,10 +25,8 @@ OOPA data is at the OOPA case level (may include multiple cases per property as 
 * `pen_paid`: Amount of penalty paid to date, in dollars
 * `oth_paid`: Other fees paid to date, in dollars
 * `tier`: OOPA tier of agreement (1--4 in current data)
-
-Waiting on:
-
-* Full address including zip code
+* `property_zip5`: First 5 numbers of property zip code
+* `different_mail`: `TRUE`/`FALSE`, whether or not the property has a different mail address
 
 ## Randomization
 

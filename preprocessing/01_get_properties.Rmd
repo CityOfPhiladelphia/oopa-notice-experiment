@@ -1,13 +1,17 @@
 ---
 title: "Get city property list"
 author: "Nathaniel Olin"
-date: "`r Sys.time()`"
+date: "`r date()`"
 output: html_document
 editor_options: 
   chunk_output_type: console
 ---
 
-```{r setup, message = F}
+```{r, include = F}
+options(cli.width = 100)
+```
+
+```{r setup}
 library(tidyverse)
 ```
 
@@ -52,6 +56,12 @@ dat <- dat %>%
     property_zip
   ))
 
+dat$property_zip[dat$property_address == '2517 E CAMBRIA ST #E'] <- '19134'
+dat$property_zip[dat$property_address == '2101 VINE ST'] <- '19103'
+dat$property_zip[dat$property_address == '3655 MORRELL ST'] <- '19114'
+dat$property_zip[dat$property_address == '141 S HANCOCK ST'] <- '19106'
+dat$property_zip[dat$property_address == '2073-99 WOODHAVEN RD'] <- '19116'
+dat$property_zip[dat$property_address == '1802-62 N LAMBERT ST'] <- '19121'
 dat$property_zip[dat$property_address == '151-59 N 2ND ST'] <- '19106'
 dat$property_zip[dat$property_address == '1503 N PALETHORP ST'] <- '19122'
 dat$property_zip[dat$property_address == '327 N 17TH ST'] <- '19122'
@@ -67,6 +77,19 @@ dat <- dat %>%
            substring(property_zip, 7, 10),
            as.character(NA)))
 ```
+
+Drop zip codes with fewer than 100 BRTs / missing Zipcodes (note: these have no OOPAs)
+
+```{r}
+table(small_or_missing = 
+        dat$property_zip5 %in% c('19108', '19110', '19112', '19113') | 
+        is.na(dat$property_zip5))
+
+dat <- dat %>%
+  filter(!property_zip5 %in% c('19108', '19110', '19112', '19113') & 
+           !is.na(property_zip5))
+```
+
 
 ## Different mailing address
 

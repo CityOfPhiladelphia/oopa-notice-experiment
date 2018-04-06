@@ -1,0 +1,196 @@
+---
+title: "OOPA Risk of Material Breach Basefile"
+author: "Nathaniel Olin"
+date: "`r date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This script creates a BRT-level basefile from the cleaned `parcels.csv` and `OOPA_report_clean.csv` datasets.
+
+```{r, include = F}
+options(cli.width = 100)
+```
+
+
+```{r}
+library(tidyverse)
+library(randomizr)
+
+set.seed(100)
+```
+
+# Load data
+
+Load full list of BRTs and address data.
+
+```{r}
+full <- read_csv(file.path('..', 'data', 'parcels.csv'))
+# Convert BRT to integer to drop leading zeroes, for matching
+table(nchar(full$brt))
+full$brt <- as.integer(full$brt)
+table(nchar(full$brt))
+```
+
+Load OOPA case-level data
+
+```{r}
+oopa <- read_csv(file.path('..', 'data', 'OOPA_report_clean.csv'))
+```
+
+## Data quality checks
+
+BRT number should be unique
+
+```{r}
+stopifnot(!duplicated(full$brt))
+```
+
+Case should be unique on OOPA file
+
+```{r}
+stopifnot(!duplicated(oopa$case))
+```
+
+## Merge
+
+```{r}
+c('BRT rows' = nrow(full),
+  'BRT unique' = length(unique(full$brt)),
+  'OOPA rows' = nrow(oopa),
+  'OOPA unique' = length(unique(oopa$brt)))
+
+dat <- full_join(oopa, full, by = 'brt')
+c('Final rows' = nrow(dat),
+  'Final unique BRT' = length(unique(dat$brt)))
+```
+
+```{r}
+c('Final dataset' = nrow(dat),
+  'In both datasets' = sum(dat$brt %in% oopa$brt & dat$brt %in% full$brt),
+  'In OOPA not BRT (0?)' = sum(dat$brt %in% oopa$brt & ! dat$brt %in% full$brt),
+  'In BRT not OOPA (big)' = sum(dat$brt %in% full$brt & ! dat$brt %in% oopa$brt))
+
+stopifnot(full$brt %in% dat$brt,
+          oopa$brt %in% dat$brt)
+```
+
+It's OK if the "in OOPA but not BRT" cases are mostly complete.
+
+```{r}
+table(
+  `Status` = dat$status,
+  `In OOPA, not BRT` = dat$brt %in% oopa$brt & ! dat$brt %in% full$brt)
+
+dat %>% filter(status == '520 Ongoing' &
+                 brt %in% oopa$brt & 
+                 ! brt %in% full$brt)
+```
+
+```{r}
+rm(oopa, full)
+```
+
+# Collapse to BRT level
+
+How many BRTs appear more than once?
+
+```{r}
+dat %>%
+  filter(duplicated(brt)) %>%
+  select(brt) %>% unique() %>% nrow()
+```
+
+If there are multiple cases with the same BRT:
+
+* If only one is ongoing, take that.
+* If none are ongoing, take the most recent one.
+* If multiple are ongoing, check the data / report - shouldn't be possible.
+
+```{r}
+dat <- dat %>%
+  mutate(active = status == '520 Ongoing') %>%
+  arrange(brt, desc(active), desc(agree_start)) %>%
+  group_by(brt) %>%
+  mutate(brt_rank = 1:n()) %>%
+  ungroup()
+
+dat %>% 
+  filter(brt %in% dat$brt[duplicated(dat$brt)]) %>%
+  select(brt, agree_start, brt_rank)
+```
+
+```{r}
+reject <- subset(dat, !is.na(brt) & brt_rank > 1)
+
+# Did any active OOPAs get kicked out when de-duplicating by BRT?
+table(reject$status)
+dat[dat$brt %in% reject$brt[reject$status == '520 Ongoing'], ]
+# Not enough to matter
+```
+
+Deduplicate
+
+```{r}
+dat <- subset(dat, is.na(brt) | brt_rank == 1)
+
+stopifnot(!duplicated(dat$brt))
+dat$brt_rank <- NULL
+dat$active <- NULL
+```
+
+# New variables
+
+* Current OOPA status
+    * Not in OOPA
+    * Currently in OOPA, good standing
+    * Currently in OOPA, in material breach
+    * Previously in OOPA, completed
+    * Previously in OOPA, defaulted
+    
+```{r}
+dat$status[is.na(dat$status)] <- 'Not in OOPA'
+
+# Did people fall behind on payments?
+dat$last_date <- as.Date(NA)
+dat$last_date[!is.na(dat$default_dt)] <- dat$default_dt[!is.na(dat$default_dt)]
+dat$last_date[!is.na(dat$complete_dt)] <- dat$complete_dt[!is.na(dat$complete_dt)]
+dat$last_date[is.na(dat$last_date) & !is.na(dat$case)] <- Sys.Date()
+
+dat <- dat %>%
+  mutate(months_in_agree = 
+           (lubridate::year(last_date) * 12 + lubridate::month(last_date)) -
+           (lubridate::year(agree_start) * 12 + lubridate::month(agree_start)),
+         num_diff = months_in_agree - num_pmts)
+
+dat$status[dat$status == '520 Ongoing' & 
+             dat$num_diff > 1] <- '520 Ongoing, Breached'
+```
+
+Add in missing values in stratification variables (or drop when small)
+
+```{r}
+dat$tier[is.na(dat$tier)] <- 'Missing'
+
+table(missing_mail = is.na(dat$different_mail), 
+      in_oopa = is.na(dat$case))
+# Drop these records
+dat <- subset(dat, !is.na(different_mail))
+
+table(missing_zip = is.na(dat$property_zip5),
+      in_oopa = is.na(dat$case))
+# Don't want to drop active OOPA cases so
+dat$property_zip5[is.na(dat$property_zip5)] <- 'Missing'
+```
+
+# Write out
+
+Check overall data and data with OOPA numbers
+
+```{r}
+dat %>% print(n = 4, width = Inf)
+dat %>% filter(!is.na(case)) %>% print(n = 4, width = Inf)
+write_csv(dat, file.path('..', 'data', 'basefile.csv'))
+```
+
