@@ -18,7 +18,7 @@ This script randomly assigns all BRTs in the City of Philadelphia to receive eit
 * A skinny `rando.csv` file with BRT and treatment assignment.
 
 ```{r, include = F}
-options(cli.width = 100)
+options(cli.width = 80)
 ```
 
 ```{r}
@@ -74,30 +74,41 @@ dat$treat <- randomizr::block_ra(blocks = dat$block,
 
 ## Checks
 
+## Treatment assignment
+
+```{r}
+table(dat$status, dat$treat) %>%
+  knitr::kable(col.names = c('Treatment', 'N'))
+
+table(dat$status, dat$treat) %>%
+  prop.table(margin = 1) %>%
+  knitr::kable(col.names = c('Treatment', 'N'))
+```
+
+
+## Strata
+
 Proportion of sample in small strata
 
 ```{r}
 dat %>%
   group_by(block) %>%
   summarize(block_size = n()) %>%
-  ungroup() %>%
   group_by(block_size) %>%
   summarize(
     n_strata = n(),
     n_in_block = sum(block_size)) %>%
-  ungroup() %>%
   mutate(prop = n_in_block / sum(n_in_block),
          cumul_prop = scales::percent(cumsum(prop))) %>%
   select(block_size, cumul_prop) %>%
   filter(block_size %in% c(1, 2, 3, 5, 10)) %>%
   knitr::kable(col.names = c(
-    'Block size',
-    'Prop. in blocks $\\leq$ block size'),
+    'Block size', 'Prop. in blocks $\\leq$ block size'),
     format = 'html') %>%
   kableExtra::kable_styling(full_width = F)
 ```
 
-Balance
+## Covariate Balance
 
 ```{r, fig.width = 5, fig.height = 8}
 f <- as.formula(sprintf('treat ~ %s', paste(block_var, collapse = ' + ')))
