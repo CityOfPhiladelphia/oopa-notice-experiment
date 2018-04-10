@@ -1,7 +1,7 @@
 ---
 title: "OOPA Risk of Material Breach Randomization"
 author: "Nathaniel Olin"
-date: "`r Sys.Date()`"
+date: "`r date()`"
 output: 
   html_document:
     toc: true
@@ -12,10 +12,11 @@ editor_options:
   chunk_output_type: console
 ---
 
-This script randomly assigns all BRTs in the City of Philadelphia to receive either old letters or new letters (50-50 split), and exports
+This script randomly assigns all BRTs in the City of Philadelphia to receive either old letters or new letters (50-50 split), and exports:
 
-* A timestamped file of the randomization for backup purposes, and
-* A skinny `rando.csv` file with BRT and treatment assignment.
+* A timestamped file of the randomization for backup purposes,
+* A skinny `rando.csv` file with BRT and treatment assignment, for internal use, and
+* A timestamped export file for sending to the OIT Revenue office.
 
 ```{r knitr-options, include = F}
 options(cli.width = 80)
@@ -25,9 +26,38 @@ options(cli.width = 80)
 library(tidyverse)
 ```
 
+# Load data
+
 ```{r read-data}
 dat <- read_csv(file.path('..', 'data', 'basefile.csv'))
 dat$property_zip5 <- as.character(dat$property_zip5)
+```
+
+## Checks
+
+```{r}
+# Duplicates
+sapply(dat, function(x) sum(duplicated(x)))
+stopifnot(!duplicated(dat$brt))
+
+# Missing values
+sapply(dat, function(x) sum(is.na(x)))
+```
+
+## Cleaning
+
+```{r}
+# Bin small zipcodes
+dat <- dat %>% 
+  group_by(property_zip5) %>%
+  mutate(zip_oopa_count = sum(!is.na(case))) %>%
+  ungroup() %>%
+  mutate(zip_bin = if_else(zip_oopa_count < 25, 'Small Zip', property_zip5)) %>%
+  ungroup()
+
+dat %>%
+  filter(zip_bin == 'Small Zip') %>%
+  count(property_zip5)
 ```
 
 # Set up randomization
@@ -40,22 +70,41 @@ prob <- 0.5
 # Condition names
 conditions <- c('Control', 'New Letter')
 # Blocking variables
-block_var <- c('status', 'tier', 'property_zip5', 'different_mail')
+block_var <- c('status', 'tier', 'zip_bin', 'different_mail')
 ```
 
-## Check distribution of block variables
+## Check distribution of block variables {.tabset}
 
-```{r block-distribution}
-qplot(dat$property_zip5) + coord_flip()
+### Currently within OOPA
 
-for(i in c(1, 2, 4)){
+```{r block-distribution-oopa}
+dat %>% 
+  filter(!is.na(case)) %>% 
+  ggplot(aes(zip_bin)) + geom_bar() + coord_flip()
+
+for(i in block_var[block_var != 'zip_bin']){
   p <- dat %>%
     filter(!is.na(case)) %>%
-    ggplot(aes_string(block_var[i])) + geom_bar()
+    ggplot(aes_string(i)) + 
+    geom_bar() +
+    labs(title = sprintf('Distribution of %s', i))
   print(p)
 }
 ```
 
+### Full sample
+
+```{r block-distribution-all}
+ggplot(dat, aes(zip_bin)) + geom_bar() + coord_flip()
+
+for(i in block_var[block_var != 'zip_bin']){
+  p <- dat %>%
+    ggplot(aes_string(i)) + 
+    geom_bar() +
+    labs(title = sprintf('Distribution of %s', i))
+  print(p)
+}
+```
 
 ## Create blocks
 
@@ -73,17 +122,7 @@ dat$treat <- randomizr::block_ra(blocks = dat$block,
                                  conditions = conditions)
 ```
 
-## Treatment assignment {.tabset}
-
-### Currently within OOPA 
-
-```{r assign-table-oopa}
-tab <- table(dat$status[!is.na(dat$case)], dat$treat[!is.na(dat$case)])
-tab %>% knitr::kable(format.args = list(big.mark = ','))
-tab %>% prop.table(margin = 1) %>% knitr::kable()
-```
-
-### Full sample
+## Treatment assignment
 
 ```{r assign-table-all}
 tab <- table(dat$status, dat$treat)
@@ -138,7 +177,7 @@ dat %>%
 
 Set confidence level
 
-```{r}
+```{r ci-level}
 conf <- 0.90
 z <- qnorm(conf + (1 - conf) / 2)
 ```
@@ -188,19 +227,31 @@ broom::tidy(bal_check) %>%
 
 # Export
 
+```{r}
+ts <- format.Date(Sys.time(), format = '%Y-%m-%d_%H-%M-%S')
+```
+
+## Internal
+
 Full timestamped randomization
 
 ```{r export-full}
-write_csv(dat, sprintf(
-  'full_randomization_%s.csv',
-  format.Date(Sys.time(), format = '%Y-%m-%d_%H-%M-%S')))
+write_csv(dat, file.path('..', 'data', sprintf('full_randomization_%s.csv', ts)))
 ```
 
 Skinny randomization file
 
 ```{r export-skinny}
-dat %>%
-  select(brt, treat) %>%
+dat %>% select(brt, treat) %>%
   write_csv(file.path('..', 'data', 'rando.csv'))
+```
+
+## External
+
+```{r}
+if(! 'export' %in% list.files(file.path('..', 'data')))
+  dir.create(file.path('..', 'data', 'export'))
+dat %>% select(brt, treat) %>% write_csv(
+  file.path('..', 'data', 'export', sprintf('BRT_OOPA-RISK-EXPERIMENT_%s.csv', ts)))
 ```
 

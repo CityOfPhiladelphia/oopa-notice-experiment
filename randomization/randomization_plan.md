@@ -13,9 +13,13 @@ OOPA data is at the OOPA case level (may include multiple cases per property as 
 
 ## Variable definitions
 
-* `case`: OOPA case number, *not* unique by property (a property could change hands, or an agreement could end and restart with a new case number).
-* `brt`: BRT number, **unit of randomization,** unique by property. By policy, residents cannot have OOPAs on multiple properties (since they cannot occupy more than one residence).
-* `num_pmts`: Number of payments received by 2017-12-31
+* `case`: OOPA case number
+    * *not* unique by property (a property could change hands, or an agreement could end and restart with a new case number). 
+    * Missing if not in OOPA
+* `brt`: BRT number
+    * **unit of randomization,** unique by property
+    * By policy, residents cannot have OOPAs on multiple properties (since they cannot occupy more than one residence). 
+* `num_pmts`: Number of payments received by 2018-02-23
 * `status`: Case status, either 520 (ongoing), 530 (defaulted), or 560 (completed).
 * `agree_start`: Date agreement started
 * `default_dt`: Date agreement defaulted (if any)
@@ -24,8 +28,9 @@ OOPA data is at the OOPA case level (may include multiple cases per property as 
 * `int_paid`: Amount of interest paid to date, in dollars
 * `pen_paid`: Amount of penalty paid to date, in dollars
 * `oth_paid`: Other fees paid to date, in dollars
-* `tier`: OOPA tier of agreement (1--4 in current data)
+* `tier`: OOPA tier of agreement (1--4 or 'Missing' if not in OOPA)
 * `property_zip5`: First 5 numbers of property zip code
+* `zip_bin`: Same as `property_zip5` but "Small Zip" for all zip codes containing < 25 households with OOPAs.
 * `different_mail`: `TRUE`/`FALSE`, whether or not the property has a different mail address
 
 ## Randomization
@@ -35,9 +40,9 @@ OOPA data is at the OOPA case level (may include multiple cases per property as 
 * Control group assigned to receive existing letter (50%)
 * Treatment group assigned to receive updated letter (50%)
 
-### Stratificaiton
+### Blocking
 
-Treatment assignment will be stratified by:
+Treatment assignment will be blocked by:
 
 * Current OOPA status
     * Not in OOPA
@@ -48,24 +53,23 @@ Treatment assignment will be stratified by:
 * OOPA tier
     * `Missing` if not in OOPA
     * 1--4 if in OOPA. "Tier 5" agreements do not apply during the time period covered by this data.
-* Agreement amount
-    * NA if not in OOPA
-    * Quantiles if in OOPA (TBD)
-* Zip code
-    * 60 levels - may need to move to balance check if strata sizes get too small.
+* Binned zip code
+    * 41 levels
 
-### Balance check
+### Quality checks
 
-Logit regression: `treat ~ oopa_status + tier + agree_amt + zip`
+Block size
 
-### Data checks
+* Check distribution of block sizes for OOPA cases versus full sample
+* If more than 1% of the sample is in blocks with size 1, or more than 5% of the sample is in blocks with size $\leq$ 10, bin additional zip codes to increase block size.
 
-* Are BRTs unique?
-* Does the number of BRTs match the number of BRTs in the full file?
-* Are there duplicate mailing addresses?
-* Are there missing mailing addresses / names?
+Balance
 
-## Export
+* Logit regression: `treat ~ oopa_status + tier + zip_bin`
+* Full sample as well as OOPA-only
+* If multiple individual p-values are below 0.1 (possible exception: zip levels),
+
+## External exports
 
 * CSV with two columns
     * `brt`: BRT number
