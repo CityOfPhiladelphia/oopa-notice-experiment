@@ -16,9 +16,6 @@ options(cli.width = 100)
 
 ```{r}
 library(tidyverse)
-library(randomizr)
-
-set.seed(100)
 ```
 
 # Load data
@@ -26,11 +23,11 @@ set.seed(100)
 Load full list of BRTs and address data.
 
 ```{r}
-full <- read_csv(file.path('..', 'data', 'parcels.csv'))
+tips <- read_csv(file.path('..', 'data', 'parcels.csv'))
 # Convert BRT to integer to drop leading zeroes, for matching
-table(nchar(full$brt))
-full$brt <- as.integer(full$brt)
-table(nchar(full$brt))
+table(nchar(tips$brt))
+tips$brt <- as.integer(tips$brt)
+table(nchar(tips$brt))
 ```
 
 Load OOPA case-level data
@@ -39,12 +36,24 @@ Load OOPA case-level data
 oopa <- read_csv(file.path('..', 'data', 'OOPA_report_clean.csv'))
 ```
 
+Load census data
+
+## Census data
+
+```{r}
+census <- read_csv(file.path('..', 'data', 'census_tract_data.csv'))
+table(nchar(census$brt))
+census$brt <- as.integer(census$brt)
+table(nchar(census$brt))
+```
+
 ## Data quality checks
 
 BRT number should be unique
 
 ```{r}
-stopifnot(!duplicated(full$brt))
+stopifnot(!duplicated(tips$brt))
+stopifnot(!duplicated(census$brt))
 ```
 
 Case should be unique on OOPA file
@@ -56,40 +65,35 @@ stopifnot(!duplicated(oopa$case))
 ## Merge
 
 ```{r}
-c('BRT rows' = nrow(full),
-  'BRT unique' = length(unique(full$brt)),
+c('OPA rows' = nrow(tips),
+  'OPA unique' = length(unique(tips$brt)),
   'OOPA rows' = nrow(oopa),
-  'OOPA unique' = length(unique(oopa$brt)))
+  'OOPA unique' = length(unique(oopa$brt)),
+  'Census rows' = nrow(census),
+  'Census unique' = length(unique(census$brt)))
 
-dat <- full_join(oopa, full, by = 'brt')
+dat <- oopa %>% 
+  full_join(tips, by = 'brt') %>%
+  left_join(census, by = 'brt')
+
 c('Final rows' = nrow(dat),
   'Final unique BRT' = length(unique(dat$brt)))
 ```
 
 ```{r}
 c('Final dataset' = nrow(dat),
-  'In both datasets' = sum(dat$brt %in% oopa$brt & dat$brt %in% full$brt),
-  'In OOPA not BRT (0?)' = sum(dat$brt %in% oopa$brt & ! dat$brt %in% full$brt),
-  'In BRT not OOPA (big)' = sum(dat$brt %in% full$brt & ! dat$brt %in% oopa$brt))
+  'In both datasets' = sum(dat$brt %in% oopa$brt & dat$brt %in% tips$brt),
+  'In OOPA not OPA (0?)' = sum(dat$brt %in% oopa$brt & ! dat$brt %in% tips$brt),
+  'In OPA not OOPA (big)' = sum(dat$brt %in% tips$brt & ! dat$brt %in% oopa$brt),
+  'In Census not OPA' = sum(dat$brt %in% census$brt & ! dat$brt %in% tips$brt),
+  'In OPA not Census' = sum(dat$brt %in% tips$brt & ! dat$brt %in% census$brt))
 
-stopifnot(full$brt %in% dat$brt,
+stopifnot(tips$brt %in% dat$brt,
           oopa$brt %in% dat$brt)
 ```
 
-It's OK if the "in OOPA but not BRT" cases are mostly complete.
-
 ```{r}
-table(
-  `Status` = dat$status,
-  `In OOPA, not BRT` = dat$brt %in% oopa$brt & ! dat$brt %in% full$brt)
-
-dat %>% filter(status == '520 Ongoing' &
-                 brt %in% oopa$brt & 
-                 ! brt %in% full$brt)
-```
-
-```{r}
-rm(oopa, full)
+rm(oopa, tips, census)
 ```
 
 # Collapse to BRT level
@@ -142,12 +146,13 @@ dat$active <- NULL
 
 # New variables
 
-* Current OOPA status
-    * Not in OOPA
-    * Currently in OOPA, good standing
-    * Currently in OOPA, in material breach
-    * Previously in OOPA, completed
-    * Previously in OOPA, defaulted
+## Current OOPA status
+    
+* Not in OOPA
+* Currently in OOPA, good standing
+* Currently in OOPA, in material breach
+* Previously in OOPA, completed
+* Previously in OOPA, defaulted
     
 ```{r}
 dat$status[is.na(dat$status)] <- 'Not in OOPA'
@@ -166,6 +171,25 @@ dat <- dat %>%
 
 dat$status[dat$status == '520 Ongoing' & 
              dat$num_diff > 1] <- '520 Ongoing, Breached'
+```
+
+## Bin census variables
+
+```{r}
+# Binning function that mean-imputes missing values
+bin <- function(x, n = 5, missing.fun = function(x) mean(x, na.rm = T)){
+  x.na <- missing.fun(x)
+  cat("Imputing", scales::comma(sum(is.na(x))), "values as", x.na, "\n")
+  x[is.na(x)] <- x.na
+  cut(x, breaks = n)
+}
+```
+
+```{r}
+dat <- dat %>%
+  mutate(bin_no_hs = bin(pct_no_hs),
+         bin_college = bin(pct_college),
+         bin_non_english = bin(pct_non_english))
 ```
 
 Add in missing values in stratification variables (or drop when small)

@@ -72,14 +72,22 @@ table(dat$Tract %in% opa$tractce10, useNA = 'always')
 table(opa$tractce10 %in% dat$Tract, useNA = 'always')
 ```
 
-# Merge and save out
+## Merge and rename
 
 ```{r}
 dat <- merge(dat, opa, by.x = 'Tract', by.y = 'tractce10', all = T) %>%
-  select(Tract, parcel_number, 
-         pct_College_ACS_10_14, pct_Not_HS_Grad_ACS_10_14, pct_Othr_Lang_ACS_10_14)
-head(dat) %>% knitr::kable()
+  select(tract = Tract, 
+         brt = parcel_number, 
+         pct_college = pct_College_ACS_10_14, 
+         pct_no_hs = pct_Not_HS_Grad_ACS_10_14, 
+         pct_non_english = pct_Othr_Lang_ACS_10_14)
 
+head(dat) %>% knitr::kable()
+```
+
+# Save out
+
+```{r}
 write_csv(dat, file.path('..', 'data', 'census_tract_data.csv'))
 ```
 

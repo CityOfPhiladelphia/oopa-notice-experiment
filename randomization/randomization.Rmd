@@ -70,7 +70,8 @@ prob <- 0.5
 # Condition names
 conditions <- c('Control', 'New Letter')
 # Blocking variables
-block_var <- c('status', 'tier', 'zip_bin', 'different_mail')
+block_var <- c('status', 'tier', 'different_mail',
+               'bin_no_hs', 'bin_college', 'bin_non_english')
 ```
 
 ## Check distribution of block variables {.tabset}
@@ -78,11 +79,7 @@ block_var <- c('status', 'tier', 'zip_bin', 'different_mail')
 ### Currently within OOPA
 
 ```{r block-distribution-oopa}
-dat %>% 
-  filter(!is.na(case)) %>% 
-  ggplot(aes(zip_bin)) + geom_bar() + coord_flip()
-
-for(i in block_var[block_var != 'zip_bin']){
+for(i in block_var){
   p <- dat %>%
     filter(!is.na(case)) %>%
     ggplot(aes_string(i)) + 
@@ -95,9 +92,7 @@ for(i in block_var[block_var != 'zip_bin']){
 ### Full sample
 
 ```{r block-distribution-all}
-ggplot(dat, aes(zip_bin)) + geom_bar() + coord_flip()
-
-for(i in block_var[block_var != 'zip_bin']){
+for(i in block_var){
   p <- dat %>%
     ggplot(aes_string(i)) + 
     geom_bar() +
