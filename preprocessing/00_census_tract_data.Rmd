@@ -1,0 +1,87 @@
+---
+title: "Get census tract info"
+author: "Nathaniel Olin"
+date: "`r date()`"
+output: html_document
+---
+
+```{r}
+options(cli.width = 100)
+```
+
+Before using this script:
+
+1. Get a census API key [here](https://api.census.gov/data/key_signup.html).
+2. Add the line `Sys.setenv(CENSUS_KEY = YOURKEYHERE)` to `~/.Rprofile` (creating the file if necessary)
+
+```{r}
+library(tidyverse)
+```
+
+# Get census data from federal API
+
+```{r}
+censusapi::listCensusMetadata("pdb/tract", "2016", type = "g")
+fields <- censusapi::listCensusMetadata("pdb/tract", "2016") %>%
+  select(name, label)
+
+var_names <- c("Tract",
+               "College_ACS_10_14",
+               "pct_College_ACS_10_14",
+               "Not_HS_Grad_ACS_10_14",
+               "pct_Not_HS_Grad_ACS_10_14",
+               "Othr_Lang_ACS_10_14",
+               "pct_Othr_Lang_ACS_10_14")
+
+stopifnot(var_names %in% fields$name)
+
+fields %>% 
+  filter(name %in% var_names) %>% 
+  arrange(substring(name, 1, 3) %in% c('avg', 'pct'), name) %>% 
+  knitr::kable()
+```
+
+## All tracts from Phila. PA
+
+```{r}
+dat <- censusapi::getCensus(
+  "pdb/tract", "2016", vars = var_names, 
+  region = "tract:*", regionin = "state:42+county:101")
+```
+
+# Load OPA data
+
+```{r}
+query <- paste("SELECT o.parcel_number,",
+               "c.tractce10",
+               "FROM opa_properties_public o",
+               "LEFT JOIN census_tracts_2010 c",
+               "ON st_within(o.the_geom, c.the_geom)")
+
+url <- httr::parse_url("https://phl.carto.com/api/v2/sql")
+url$query <- list(q = query, format = 'csv')
+opa <- url %>%
+  httr::build_url() %>%
+  read_csv()
+```
+
+## Check tract ID overlap
+
+```{r}
+table(dat$Tract %in% opa$tractce10, useNA = 'always')
+table(opa$tractce10 %in% dat$Tract, useNA = 'always')
+```
+
+# Merge and save out
+
+```{r}
+dat <- merge(dat, opa, by.x = 'Tract', by.y = 'tractce10', all = T) %>%
+  select(Tract, parcel_number, 
+         pct_College_ACS_10_14, pct_Not_HS_Grad_ACS_10_14, pct_Othr_Lang_ACS_10_14)
+head(dat) %>% knitr::kable()
+
+write_csv(dat, file.path('..', 'data', 'census_tract_data.csv'))
+```
+
+
+
