@@ -5,21 +5,25 @@ date: "`r date()`"
 output: html_document
 ---
 
-To use this script:
+```{r}
+knitr::opts_chunk$set(out.width = 80)
+```
+
+Before using this script:
 
 1. Get a census API key [here](https://api.census.gov/data/key_signup.html).
 2. Add the line `Sys.setenv(CENSUS_KEY = YOURKEYHERE)` to `~/.Rprofile` (creating the file if necessary)
+3. Use this query in your browser to get a lookup table of parcel numbers (often called OPA or BRT numbers) and census tract: [https://phl.carto.com/api/v2/sql?q=select%20opa_properties_public.parcel_number,%20tractce10%20from%20opa_properties_public%20left%20join%20census_tracts_2010%20on%20st_within(opa_properties_public.the_geom,%20census_tracts_2010.the_geom)&format=csv] and save the result in `data/raw/opa_properties_public_census.csv`
 
 ```{r}
 library(tidyverse)
-library(censusapi)
 ```
 
-# Get fields from most recent block group data
+# Get census data from federal API
 
 ```{r}
-listCensusMetadata("pdb/tract", "2016", type = "g")
-fields <- listCensusMetadata("pdb/tract", "2016") %>%
+censusapi::listCensusMetadata("pdb/tract", "2016", type = "g")
+fields <- censusapi::listCensusMetadata("pdb/tract", "2016") %>%
   select(name, label)
 
 var_names <- c("Tract",
@@ -38,11 +42,12 @@ fields %>%
   knitr::kable()
 ```
 
-# Get data for Philadelphia county, all tracts
+## All tracts from Phila. PA
 
 ```{r}
-dat <- getCensus("pdb/tract", "2016", vars = var_names, 
-                 region = "tract:*", regionin = "state:42+county:101")
+dat <- censusapi::getCensus(
+  "pdb/tract", "2016", vars = var_names, 
+  region = "tract:*", regionin = "state:42+county:101")
 
 # recode tract to match philly's coding?
 
@@ -55,17 +60,24 @@ round(unique(dat$tract))
 # Load OPA data
 
 ```{r}
-opa <- readr::read_csv(file.path("..", "data", "raw", "opa_properties_public.csv"))
+opa <- readr::read_csv(file.path("..", "data", "raw", "opa_properties_public_census.csv"))
 ```
+
+## Check tract ID overlap
 
 ```{r}
-unique(opa$census_tract[order(opa$census_tract)])
-unique(dat$Tract)
+table(dat$Tract %in% opa$tractce10, useNA = 'always')
+table(opa$tractce10 %in% dat$Tract, useNA = 'always')
 ```
 
+# Merge and save out
 
 ```{r}
-dat %>% filter(tract == '989100')
+dat <- merge(dat, opa, by.x = 'Tract', by.y = 'tractce10', all = T)
+head(dat) %>% knitr::kable()
+
+write_csv(dat, file.path('..', 'data', 'census_tract_data.csv'))
 ```
+
 
 
