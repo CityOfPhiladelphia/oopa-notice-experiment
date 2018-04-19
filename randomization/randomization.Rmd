@@ -22,6 +22,11 @@ This script randomly assigns all BRTs in the City of Philadelphia to receive eit
 options(cli.width = 80)
 ```
 
+```{r}
+set.seed(100)
+```
+
+
 ```{r libraries}
 library(tidyverse)
 ```

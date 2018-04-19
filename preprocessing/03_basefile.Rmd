@@ -169,15 +169,15 @@ dat <- dat %>%
            (lubridate::year(agree_start) * 12 + lubridate::month(agree_start)),
          num_diff = months_in_agree - num_pmts)
 
-dat$status[dat$status == '520 Ongoing' & 
-             dat$num_diff > 1] <- '520 Ongoing, Breached'
+# dat$status[dat$status == '520 Ongoing' & 
+#              dat$num_diff > 1] <- '520 Ongoing, Breached'
 ```
 
 ## Bin census variables
 
 ```{r}
 # Binning function that mean-imputes missing values
-bin <- function(x, n = 5, missing.fun = function(x) mean(x, na.rm = T)){
+bin <- function(x, n = 4, missing.fun = function(x) mean(x, na.rm = T)){
   x.na <- missing.fun(x)
   cat("Imputing", scales::comma(sum(is.na(x))), "values as", x.na, "\n")
   x[is.na(x)] <- x.na
