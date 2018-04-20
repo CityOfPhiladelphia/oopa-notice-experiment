@@ -1,0 +1,257 @@
+---
+title: "OOPA Risk of Material Breach Randomization"
+author: "Nathaniel Olin"
+date: "`r date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+editor_options: 
+  chunk_output_type: console
+---
+
+This script randomly assigns all BRTs in the City of Philadelphia to receive either old letters or new letters (50-50 split), and exports:
+
+* A timestamped file of the randomization for backup purposes,
+* A skinny `rando.csv` file with BRT and treatment assignment, for internal use, and
+* A timestamped export file for sending to the OIT Revenue office.
+
+```{r knitr-options, include = F}
+options(cli.width = 80)
+```
+
+```{r}
+set.seed(100)
+```
+
+
+```{r libraries}
+library(tidyverse)
+```
+
+# Load data
+
+```{r read-data}
+dat <- read_csv(file.path('..', 'data', 'basefile.csv'))
+dat$property_zip5 <- as.character(dat$property_zip5)
+```
+
+## Checks
+
+```{r}
+# Duplicates
+sapply(dat, function(x) sum(duplicated(x)))
+stopifnot(!duplicated(dat$brt))
+
+# Missing values
+sapply(dat, function(x) sum(is.na(x)))
+```
+
+## Cleaning
+
+```{r}
+# Bin small zipcodes
+dat <- dat %>% 
+  group_by(property_zip5) %>%
+  mutate(zip_oopa_count = sum(!is.na(case))) %>%
+  ungroup() %>%
+  mutate(zip_bin = if_else(zip_oopa_count < 25, 'Small Zip', property_zip5)) %>%
+  ungroup()
+
+dat %>%
+  filter(zip_bin == 'Small Zip') %>%
+  count(property_zip5)
+```
+
+# Set up randomization
+
+## Configure parameters
+
+```{r rando-parameters}
+# Probability of assignment to treatment
+prob <- 0.5
+# Condition names
+conditions <- c('Control', 'New Letter')
+# Blocking variables
+block_var <- c('status', 'tier', 'different_mail',
+               'bin_no_hs', 'bin_college', 'bin_non_english')
+```
+
+## Check distribution of block variables {.tabset}
+
+### Currently within OOPA
+
+```{r block-distribution-oopa}
+for(i in block_var){
+  p <- dat %>%
+    filter(!is.na(case)) %>%
+    ggplot(aes_string(i)) + 
+    geom_bar() +
+    labs(title = sprintf('Distribution of %s', i))
+  print(p)
+}
+```
+
+### Full sample
+
+```{r block-distribution-all}
+for(i in block_var){
+  p <- dat %>%
+    ggplot(aes_string(i)) + 
+    geom_bar() +
+    labs(title = sprintf('Distribution of %s', i))
+  print(p)
+}
+```
+
+## Create blocks
+
+```{r block-create}
+dat$block <- do.call(paste, c(dat[, block_var], sep = '|'))
+```
+
+# Randomize + quality checks
+
+## Randomization
+
+```{r rando}
+dat$treat <- randomizr::block_ra(blocks = dat$block, 
+                                 prob = prob,
+                                 conditions = conditions)
+```
+
+## Treatment assignment
+
+```{r assign-table-all}
+tab <- table(dat$status, dat$treat)
+tab %>% knitr::kable(format.args = list(big.mark = ','))
+tab %>% prop.table(margin = 1) %>% knitr::kable()
+```
+
+## Proportion of sample in small blocks {.tabset}
+
+### Currently within OOPA
+
+```{r block-table-oopa}
+dat %>%
+  filter(!is.na(case)) %>%
+  group_by(block) %>%
+  summarize(block_size = n()) %>%
+  group_by(block_size) %>%
+  summarize(
+    n_strata = n(),
+    n_in_block = sum(block_size)) %>%
+  mutate(prop = n_in_block / sum(n_in_block),
+         cumul_prop = scales::percent(cumsum(prop))) %>%
+  select(cumul_prop, block_size) %>%
+  filter(block_size %in% c(1, 2, 3, 5, 10, 20)) %>%
+  knitr::kable(col.names = c(
+    'Prop. in blocks $\\leq$ block size', 'Block size'),
+    format = 'html') %>%
+  kableExtra::kable_styling(full_width = F)
+```
+
+### Full sample
+
+```{r block-table-all}
+dat %>%
+  group_by(block) %>%
+  summarize(block_size = n()) %>%
+  group_by(block_size) %>%
+  summarize(
+    n_strata = n(),
+    n_in_block = sum(block_size)) %>%
+  mutate(prop = n_in_block / sum(n_in_block),
+         cumul_prop = scales::percent(cumsum(prop))) %>%
+  select(cumul_prop, block_size) %>%
+  filter(block_size %in% c(1, 2, 3, 5, 10, 20)) %>%
+  knitr::kable(col.names = c(
+    'Prop. in blocks $\\leq$ block size', 'Block size'),
+    format = 'html') %>%
+  kableExtra::kable_styling(full_width = F)
+```
+
+## Covariate Balance {.tabset}
+
+Set confidence level
+
+```{r ci-level}
+conf <- 0.90
+z <- qnorm(conf + (1 - conf) / 2)
+```
+
+### Currently within OOPA
+
+```{r balance-oopa, fig.width = 5, fig.height = 8}
+f <- as.formula(sprintf('treat ~ %s', paste(block_var, collapse = ' + ')))
+bal_check <- glm(formula = f, 
+                 data = dat[!is.na(dat$case), ], 
+                 family = binomial(link = 'logit'))
+
+summary(bal_check)
+
+broom::tidy(bal_check) %>%
+  mutate(ci_low = estimate - z * std.error,
+         ci_high = estimate + z * std.error) %>%
+  ggplot(aes(term, estimate)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high)) +
+  geom_hline(yintercept = 0, linetype = 'dashed') +
+  coord_flip() +
+  theme_bw()
+```
+
+### Full sample 
+
+```{r balance-all, fig.width = 5, fig.height = 8}
+f <- as.formula(sprintf('treat ~ %s', paste(block_var, collapse = ' + ')))
+bal_check <- glm(formula = f, 
+                 data = dat, 
+                 family = binomial(link = 'logit'))
+
+summary(bal_check)
+
+broom::tidy(bal_check) %>%
+  mutate(ci_low = estimate - z * std.error,
+         ci_high = estimate + z * std.error) %>%
+  ggplot(aes(term, estimate)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high)) +
+  geom_hline(yintercept = 0, linetype = 'dashed') +
+  coord_flip() +
+  theme_bw()
+```
+
+
+# Export
+
+```{r}
+ts <- format.Date(Sys.time(), format = '%Y-%m-%d_%H-%M-%S')
+```
+
+## Internal
+
+Full timestamped randomization
+
+```{r export-full}
+write_csv(dat, file.path('..', 'data', sprintf('full_randomization_%s.csv', ts)))
+```
+
+Skinny randomization file
+
+```{r export-skinny}
+dat %>% select(brt, treat) %>%
+  write_csv(file.path('..', 'data', 'rando.csv'))
+```
+
+## External
+
+```{r}
+if(! 'export' %in% list.files(file.path('..', 'data')))
+  dir.create(file.path('..', 'data', 'export'))
+dat %>% select(brt, treat) %>% write_csv(
+  file.path('..', 'data', 'export', sprintf('BRT_OOPA-RISK-EXPERIMENT_%s.csv', ts)))
+```
+

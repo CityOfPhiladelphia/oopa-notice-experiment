@@ -1,55 +1,108 @@
 ---
 title: "Get city property list"
 author: "Nathaniel Olin"
-date: "`r Sys.time()`"
+date: "`r date()`"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
-# Setup
-
-```{r setup, message = F}
-library(dplyr)
+```{r, include = F}
+options(cli.width = 100)
 ```
 
-Define function to make SQL queries with the City's [carto API](https://cityofphiladelphia.github.io/carto-api-explorer/#real_estate_tax_balances).
-
-```{r api-function}
-get_philly_data <- function(query,
-                            api_url = 'https://phl.carto.com/api/v2/sql'){
-  # Create URL
-  url <- URLencode(sprintf('%s?q=%s', api_url, query))
-  res <- jsonlite::fromJSON(RCurl::getURLContent(url))
-
-  # Return
-  as.data.frame(res$rows)
-}
+```{r setup}
+library(tidyverse)
 ```
 
-# Get data
+# Load data
 
-Test the function
+```{r}
+dat <- read_csv(file.path('..', 'data', 'raw', 'BRT_with_Address.csv'))
 
-```{r test-function}
-cols <- c('parcel_number', 'street_code', 'street_designation', 'street_direction', 'street_name')
-sprintf(
-  'SELECT %s FROM opa_properties_public limit 2',
-  paste(cols, collapse = ',')) %>%
-  get_philly_data %>%
-  knitr::kable()
+names(dat) <- names(dat) %>% tolower() %>% 
+  str_replace_all(' ', '_') %>%
+  str_replace_all('#', '_num')
+
+table(duplicated(dat))
+table(duplicated(dat$brt))
+# remove exact duplicate rows
+nrow(dat)
+dat <- filter(dat, ! duplicated(brt))
+nrow(dat)
 ```
 
-Get unique parcel numbers
+# Clean
 
-```{r get-parcels}
-parcels <- get_philly_data('SELECT parcel_number FROM opa_properties_public')
+## Zip codes
 
-head(parcels)
-nrow(parcels)
+```{r}
+# drop extra -'s
+dat <- dat %>% 
+  mutate(property_zip = str_replace_all(property_zip, '-$', ''))
+
+# missing dashes
+dat <- dat %>%
+  mutate(property_zip = str_replace_all(
+    property_zip, 
+    '(^.....)(....$)',
+    '\\1-\\2'))
+
+# drop last 4 if they're incomplete
+dat <- dat %>%
+  mutate(property_zip = if_else(
+    nchar(property_zip) > 5 & nchar(property_zip) < 10,
+    substring(property_zip, 1, 5),
+    property_zip
+  ))
+
+dat$property_zip[dat$property_address == '2517 E CAMBRIA ST #E'] <- '19134'
+dat$property_zip[dat$property_address == '2101 VINE ST'] <- '19103'
+dat$property_zip[dat$property_address == '3655 MORRELL ST'] <- '19114'
+dat$property_zip[dat$property_address == '141 S HANCOCK ST'] <- '19106'
+dat$property_zip[dat$property_address == '2073-99 WOODHAVEN RD'] <- '19116'
+dat$property_zip[dat$property_address == '1802-62 N LAMBERT ST'] <- '19121'
+dat$property_zip[dat$property_address == '151-59 N 2ND ST'] <- '19106'
+dat$property_zip[dat$property_address == '1503 N PALETHORP ST'] <- '19122'
+dat$property_zip[dat$property_address == '327 N 17TH ST'] <- '19122'
+
+table(`Zip digits` = nchar(dat$property_zip))
+```
+
+```{r}
+dat <- dat %>%
+  mutate(property_zip5 = substring(property_zip, 1, 5),
+         property_zip4 = if_else(
+           nchar(property_zip) > 5,
+           substring(property_zip, 7, 10),
+           as.character(NA)))
+```
+
+Drop zip codes with fewer than 100 BRTs / missing Zipcodes (note: these have no OOPAs)
+
+```{r}
+table(small_or_missing = 
+        dat$property_zip5 %in% c('19108', '19110', '19112', '19113') | 
+        is.na(dat$property_zip5))
+
+dat <- dat %>%
+  filter(!property_zip5 %in% c('19108', '19110', '19112', '19113') & 
+           !is.na(property_zip5))
+```
+
+
+## Different mailing address
+
+```{r}
+dat <- dat %>%
+  mutate(different_mail = !is.na(mailing_address))
 ```
 
 # Save out
 
 ```{r save-out}
-readr::write_csv(parcels, file.path('..', 'data', 'parcels.csv'))
+dat %>%
+  select(brt, property_zip5, different_mail) %>% 
+readr::write_csv(file.path('..', 'data', 'parcels.csv'))
 ```
 

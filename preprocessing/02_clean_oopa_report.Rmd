@@ -1,14 +1,18 @@
 ---
 title: "Clean OOPA report"
 author: "Nathaniel Olin"
-date: "`r Sys.Date()`"
+date: "`r date()`"
 output: html_document
 ---
 
-This script cleans the case-level OOPA report data from 2013 to 2017.
+This script cleans the case-level OOPA report data from 2013 to February 2018
+
+```{r, include = F}
+options(cli.width = 100)
+```
 
 ```{r setup, warning = F, message = F}
-library(dplyr)
+library(tidyverse)
 # Function to look at raw data without breaking text wrapping
 vis <- function(x, width = 100) substring(x, 1, width)
 ```
@@ -16,7 +20,7 @@ vis <- function(x, width = 100) substring(x, 1, width)
 # Load raw text data
 
 ```{r load text}
-raw <- readLines(file.path('..', 'data', 'raw', 'OOPA1317 - v2.txt'))
+raw <- readLines(file.path('..', 'data', 'raw', 'OOPA1318.txt'))
 length(raw)
 vis(head(raw))
 vis(tail(raw))
@@ -164,7 +168,7 @@ table(status_code = dat$status,
 table(status_code = dat$status,
       default_dt = !is.na(dat$default_dt))
 table(status_code = dat$status,
-      complete_dt_dt = !is.na(dat$complete_dt))
+      complete_dt = !is.na(dat$complete_dt))
 ```
 
 ## Sanity check
@@ -181,5 +185,5 @@ addmargins(table(
 # Write out datasets
 
 ```{r write full dataset}
-readr::write_csv(dat, file.path('..', 'data', 'OOPA_report_clean.csv'))
+write_csv(dat, file.path('..', 'data', 'OOPA_report_clean.csv'))
 ```
