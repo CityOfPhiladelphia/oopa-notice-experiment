@@ -3,6 +3,8 @@ title: "Get census tract info"
 author: "Nathaniel Olin"
 date: "`r date()`"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r}
@@ -88,6 +90,7 @@ head(dat) %>% knitr::kable()
 # Save out
 
 ```{r}
+if(! dir.exists(file.path('..', 'data'))) dir.create(file.path('..', 'data'))
 write_csv(dat, file.path('..', 'data', 'census_tract_data.csv'))
 ```
 
