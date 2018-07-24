@@ -1,0 +1,196 @@
+---
+title: "Implementation checks"
+author: "Nathaniel Olin"
+date: "`r date()`"
+output: 
+  html_document:
+    code_folding: 'hide'
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(message = F, warning = F, cli.width = 100)
+```
+
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+# Risk letters sent
+
+dat <- list.files(file.path('..', 'data', 'mailings'), full.names = T) %>%
+  lapply(read_csv) %>%
+  bind_rows()
+
+names(dat) <- tolower(names(dat))
+
+dat <- dat %>%
+  mutate(date = lubridate::mdy(date),
+         due_date = lubridate::mdy(due_date),
+         opa_number = as.integer(opa_number),
+         amount_due = as.numeric(str_replace_all(amount_due, '[$,]', ''))) %>%
+  arrange(due_date) %>%
+  mutate(month = forcats::fct_inorder(month.name[lubridate::month(due_date)]))
+```
+
+```{r}
+# Randomization
+
+rando <- read_csv(file.path('..', 'data', 'rando.csv')) %>%
+  rename(opa_number = brt)
+
+base <- read_csv(file.path('..', 'data', 'basefile.csv')) %>%
+  rename(opa_number = brt)
+
+dat <- inner_join(rando, dat) %>% 
+  inner_join(base) %>%
+  select(opa_number, treat, property_zip5, different_mail,
+         bin_no_hs, bin_college, bin_non_english,
+         status, tier, months_in_agree,
+         due_date, month, amount_due)
+
+rm(rando, base)
+```
+
+How many OPA numbers in each month's mailing appear in the previous month's?
+
+```{r}
+dupe_letters <- dat %>%
+  arrange(due_date) %>%
+  mutate(already_mailed = duplicated(opa_number)) %>%
+  count(Month = month, already_mailed) %>%
+  mutate(already_mailed = ifelse(
+    already_mailed, 
+    'Already mailed', 'Mailed first time')) %>%
+  spread(key = already_mailed, value = n)
+
+dupe_letters %>%
+  summarize_if(is.numeric, sum) %>%
+  mutate(Month = "Total") %>%
+  bind_rows(dupe_letters, .) %>%
+  select(c(1, 3, 2)) %>% 
+  knitr::kable(format = "html", format.args = list(big.mark = ",")) %>%
+  kableExtra::kable_styling(full_width = F)
+```
+
+# Balance
+
+Overall balance
+
+```{r}
+left_join(as.data.frame(table(group = dat$treat)), 
+          as.data.frame(prop.table(table(group = dat$treat))),
+          by = "group") %>% 
+  rename(Group = group, Count = Freq.x, Proportion = Freq.y) %>%
+  mutate(Proportion = scales::percent(round(Proportion, 2))) %>%
+  knitr::kable(format = "html",
+               format.args = list(big.mark = ",")) %>% 
+  kableExtra::kable_styling(full_width = F)
+```
+
+Balance by month
+
+```{r}
+dat %>%
+  count(month, treat) %>%
+  group_by(month) %>%
+  mutate(prop = scales::percent(round(n / sum(n), 2))) %>%
+  gather(variable, value, c(n, prop)) %>%
+  unite(temp, treat, variable) %>%
+  spread(key = temp, value = value) %>%
+  knitr::kable(
+    format = 'html', digits = 2,
+    col.names = c("Month", "Control N", "Control %", 
+                  "New Letter N", "New Letter %")) %>% 
+  kableExtra::kable_styling(full_width = F)
+
+chisq.test(dat$due_date, dat$treat)
+```
+
+```{r}
+# Deduplicate data
+dat <- dat %>% filter(!duplicated(opa_number))
+```
+
+```{r}
+conf <- 0.90
+z <- qnorm(conf + (1 - conf) / 2)
+dat$treat_num <- dat$treat == 'New Letter'
+
+bal <- glm(treat_num ~ 
+             different_mail + bin_no_hs + bin_college + bin_non_english + 
+             as.factor(tier) + months_in_agree + 
+             as.factor(due_date) + amount_due,
+           data = dat,
+           family = binomial(link = 'logit'))
+
+summary(bal)
+
+broom::tidy(bal) %>%
+  mutate(ci_low = estimate - z * std.error,
+         ci_high = estimate + z * std.error) %>%
+  ggplot(aes(term, estimate)) + 
+  geom_point() + 
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high)) +
+  geom_hline(yintercept = 0, linetype = 'dashed') +
+  coord_flip() +
+  theme_bw()
+ggsave('update_bal.png')
+```
+
+## Imbalance by tier?
+
+```{r}
+table(dat$tier, dat$treat) %>%
+  knitr::kable(format = 'html', digits = 2) %>%
+  kableExtra::kable_styling(full_width = F)
+
+table(dat$tier, dat$treat) %>% prop.table(margin = 1) %>%
+  knitr::kable(format = 'html', digits = 2) %>%
+  kableExtra::kable_styling(full_width = F)
+```
+
+Imbalance exists mostly in tiers 1-2 for letters that have been sent - likely due to small sample size.
+
+# Power
+
+```{r}
+source('power_calc.R')
+temp_dat <- baseline_rate <- readr::read_csv(file.path('..', 'data', 'OOPA_report_clean.csv'))
+
+baseline_rate <- mean(temp_dat$status == '530 Defaulted')
+r2 <- summary(lm(
+  !is.na(default_dt) ~ as.factor(tier), data = temp_dat
+))[['r.squared']]
+treat_prop <- 0.5
+
+n <- table(dat$due_date) %>% as.vector()
+powerdat <- data.frame(
+  month = 1:10,
+  n = cumsum(c(n, rep(mean(n), 10 - length(n)))))
+
+powerdat$mde <- powerb(
+  total_n = powerdat$n,
+  percent_treat = treat_prop,
+  base_level = baseline_rate,
+  r_sq = r2) %>% 
+  .[["intent to treat MDE"]]
+```
+
+```{r}
+ggplot(powerdat,
+       aes(x = month, y = mde)) +
+  geom_line() +
+  geom_hline(yintercept = 0, color = 'gray') +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = 1:12) +
+  labs(x = "Months of experiment", y = "Minimum detectable effect",
+       title = "Decrease in default rate we can identify",
+       subtitle = sprintf(
+         "Assuming a baseline rate of %s defaulting, %s in treatment, and R2 of %s for non-treatment variables", 
+         scales::percent(baseline_rate), scales::percent(treat_prop), round(r2, 2)))
+ggsave('power_calc.png')
+```
+
+
