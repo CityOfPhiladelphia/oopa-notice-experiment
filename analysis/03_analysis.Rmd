@@ -1,0 +1,256 @@
+---
+title: "OOPA Risk of Material Breach experiment analysis"
+author: "Nathaniel Olin"
+date: "`r date()`"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, message = F, warning = F}
+knitr::opts_chunk$set(fig.width = 5, fig.height = 5)
+library(tidyverse)
+library(modmarg)
+```
+
+```{r functions}
+treat_table <- function(dat, treatment, group_var){
+  treatment <- enquo(treatment)
+  group_var <- enquo(group_var)
+  dat %>%
+    count(!! treatment, !! group_var) %>%
+    spread(!! group_var, n, sep = ": ") %>%
+    # mutate(Total = reduce(select_if(., is.numeric), `+`)) %>%
+    mutate_if(is.numeric, function(x) sprintf(
+      "%s (%s)", 
+      scales::comma(x), 
+      scales::percent(round(x / sum(x), 3))))
+}
+
+mytab <- function(lev, eff){
+  lev <- bind_rows(lev)
+  eff <- bind_rows(eff)
+  
+  var_interest <- unique(gsub(" = .*$", "", lev$Label))
+  lev$Label <- gsub("^.* = ", "", lev$Label)
+  eff$Label <- gsub("^.* = ", "", eff$Label)
+  
+  res <- lev[, 1:5] %>%
+  select(Label, Level = Margin, Standard.Error) %>%
+  left_join(eff[, 1:5], by = "Label") %>%
+  rename(var_interest = Label,
+         Effect = Margin,
+         SE.Level = Standard.Error.x,
+         SE.Effect = Standard.Error.y)
+  
+  names(res)[1] <- var_interest
+  
+  res
+}
+
+myplot <- function(res){
+  res <- bind_rows(res)
+  
+  var_interest <- unique(gsub(" = .*$", "", res$Label))
+  names(res)[1] <- var_interest
+  res$Label <- gsub("^.* = ", "", res[[var_interest]])
+
+  p <- filter(res, !is.na(P.Value)) %>%
+    ggplot(
+      aes(x = Label, y = Margin,
+          fill = Label,
+          label = scales::percent(round(Margin, 3)),
+          ymin = `Lower CI (90%)`,
+          ymax = `Upper CI (90%)`)) +
+    geom_col(show.legend = F) +
+    geom_errorbar(width = 0.2) +
+    geom_text(aes(vjust = ifelse(Margin > 0, -1, 1)), 
+              hjust = -0.5) +
+    theme_bw() +
+    theme(text = element_text(size = 16),
+          axis.text = element_text(color = "black")) +
+    labs(x = "Treatment")
+  
+  if(any(is.na(res$P.Value))){
+    p <- p + 
+      scale_y_continuous(labels = scales::percent) +
+      geom_hline(yintercept = 0) +
+      scale_fill_manual(values = '#f3c613')
+  } else {
+    p <- p + 
+      scale_y_continuous(labels = scales::percent,
+                         expand = c(0, 0, 0.05, 0)) +
+      scale_fill_manual(values = c('#2176d2', '#f3c613'))
+  }
+  p
+}
+```
+
+```{r data, warning = F, message = F}
+# Load Data
+
+# Randomization
+rando <- read_csv(file.path("..", "data", "rando.csv"))
+
+# Covariates
+base <- read_csv(file.path("..", "data", "basefile.csv")) %>%
+  # mutate(previously_defaulted = !is.na(default_dt)) %>%
+  select(brt, status, agree_start, tier,
+         property_zip5, different_mail,
+         pct_college, pct_no_hs, pct_non_english,
+         bin_no_hs, bin_college, bin_non_english)
+
+# Unierse data
+letters <- file.path("..", "data", "mailings") %>%
+  list.files(full.names = T) %>%
+  lapply(read_csv) %>%
+  bind_rows()
+names(letters) <- tolower(names(letters))
+letters <- letters %>%
+  mutate(brt = as.integer(opa_number),
+         case = as.integer(case_number),
+         risk_date = lubridate::mdy(due_date)) %>%
+  select(case, brt, risk_date) %>%
+  filter(!duplicated(.))
+
+# Outcome data
+def <- read_csv(file.path("~", "projects", "oopa-monthly-reports", "data", "OOPA_default.csv"),
+                col_types = list(opa_number = "i")) %>%
+  rename(brt = opa_number, default_date = date) %>%
+  select(brt, default_date) %>%
+  filter(default_date > "2018-05-01")
+
+breach <- file.path("~", "projects", "oopa-monthly-reports", "data", "OOPA_material_breach.csv") %>%
+  read_csv() %>%
+  filter(!is.na(notice)) %>%
+  rename(breach_date = report_date) %>%
+  select(case, breach_date) %>%
+  filter(breach_date > "2018-05-01") %>%
+  arrange(breach_date) %>%
+  filter(!duplicated(case))
+```
+
+```{r}
+dat <- left_join(letters, rando, by = "brt") %>%
+  left_join(base, by = "brt") %>%
+  left_join(def, by = "brt") %>%
+  left_join(breach, by = "case") %>%
+  mutate(defaulted = !is.na(default_date),
+         breached = !is.na(breach_date))
+
+# 3 BRTs have multiple case numbers. 
+# If any case breached, consider BRT breached
+dat <- dat %>% 
+  arrange(breach_date) %>% 
+  filter(!duplicated(brt)) 
+
+# Check for duplicates
+stopifnot(!any(duplicated(dat$brt)))
+stopifnot(!any(duplicated(dat$case)))
+```
+
+```{r}
+rm(rando, letters, base, def, breach)
+```
+
+# Descriptive results
+
+## Outcomes
+
+```{r}
+treat_table(dat, treat, breached) %>%
+  knitr::kable(align = "r")
+
+treat_table(dat, treat, defaulted) %>%
+  knitr::kable(align = "r")
+```
+
+# Balance checks
+
+```{r}
+covar <- c("tier", "bin_college", "bin_no_hs", "bin_non_english", "different_mail")
+```
+
+# Analysis
+
+## Material Breach Rates {.tabset}
+
+```{r}
+f <- as.formula(sprintf("breached ~ treat + %s", paste(covar, collapse = " + ")))
+mod <- glm(f, family = binomial(link = "logit"), data = dat)
+lev <- marg(mod, var_interest = "treat", cofint = 0.9)
+eff <- marg(mod, var_interest = "treat", type = "effects", cofint = 0.9)
+```
+
+### Level plot
+
+```{r}
+myplot(lev) +
+  labs(title = "Material Breach",
+       y = "Material Breach Rate")
+```
+
+### Effect plot
+
+```{r}
+myplot(eff) +
+  labs(title = "Material Breach",
+       y = "Effect of Letter on Material Breach Rate")
+```
+
+### Table
+
+```{r}
+mytab(lev, eff) %>% knitr::kable()
+```
+
+### Regression
+
+```{r}
+f
+summary(mod)
+```
+
+## Default Rates {.tabset}
+
+```{r}
+f <- as.formula(sprintf("defaulted ~ treat + %s", paste(covar, collapse = " + ")))
+mod <- glm(f, family = binomial(link = "logit"), data = dat)
+lev <- marg(mod, var_interest = "treat", cofint = 0.9)
+eff <- marg(mod, var_interest = "treat", type = "effects", cofint = 0.9)
+```
+
+### Level plot
+
+```{r}
+myplot(lev) +
+  labs(title = "Defaults",
+       y = "Default Rate")
+```
+
+### Effect plot
+
+```{r}
+myplot(eff) +
+  labs(title = "Defaults",
+       y = "Effect of Letter on Default Rate")
+```
+
+### Table
+
+```{r}
+mytab(lev, eff) %>% knitr::kable()
+```
+
+### Regression
+
+```{r}
+f
+summary(mod)
+```
