@@ -17,6 +17,7 @@ editor_options:
 knitr::opts_chunk$set(fig.width = 5, fig.height = 5)
 library(tidyverse)
 library(modmarg)
+options(width = 80)
 ```
 
 ```{r functions}
@@ -31,6 +32,29 @@ treat_table <- function(dat, treatment, group_var){
       "%s (%s)", 
       scales::comma(x), 
       scales::percent(round(x / sum(x), 3))))
+}
+
+sub_marg <- function(mod, subgroup, 
+                     var_interest = "treat", 
+                     cofint = 0.9,
+                     ...){
+  stopifnot(is.factor(mod$model[[subgroup]]))
+  res <- list()
+  for(i in levels(mod$model[[subgroup]])) {
+    res <- c(
+      res, 
+      marg(mod, var_interest = var_interest, cofint = cofint,
+           data = mod$model[mod$model[[subgroup]] == i, ],
+           ...)
+    )
+  }
+  names(res) <- levels(mod$model[[subgroup]])
+  res <- bind_rows(res, .id = sprintf("subgroup: %s", subgroup))
+  res[[sprintf("subgroup: %s", subgroup)]] <- factor(
+    res[[sprintf("subgroup: %s", subgroup)]], 
+    levels = levels(mod$model[[subgroup]]))
+  
+  res
 }
 
 mytab <- function(lev, eff){
@@ -54,28 +78,56 @@ mytab <- function(lev, eff){
   res
 }
 
-myplot <- function(res){
+myplot <- function(res, dat){
   res <- bind_rows(res)
   
+  # clean up treatment variable
   var_interest <- unique(gsub(" = .*$", "", res$Label))
-  names(res)[1] <- var_interest
-  res$Label <- gsub("^.* = ", "", res[[var_interest]])
+  names(res)[names(res) == "Label"] <- var_interest
+  res[[var_interest]] <- gsub("^.* = ", "", res[[var_interest]])
+  res$Label <- scales::percent(round(res$Margin, 3))
+  
+  # get n size
 
-  p <- filter(res, !is.na(P.Value)) %>%
-    ggplot(
-      aes(x = Label, y = Margin,
-          fill = Label,
-          label = scales::percent(round(Margin, 3)),
-          ymin = `Lower CI (90%)`,
-          ymax = `Upper CI (90%)`)) +
-    geom_col(show.legend = F) +
-    geom_errorbar(width = 0.2) +
-    geom_text(aes(vjust = ifelse(Margin > 0, -1, 1)), 
-              hjust = -0.5) +
-    theme_bw() +
-    theme(text = element_text(size = 16),
-          axis.text = element_text(color = "black")) +
-    labs(x = "Treatment")
+  if (any(grepl("^subgroup: ", names(res)))){
+    subgroup <- names(res)[grepl("^subgroup: ", names(res))]
+    subgroup <- gsub("^subgroup: ", "", subgroup)
+    names(res)[grepl("^subgroup: ", names(res))] <- subgroup
+    
+    res <- dat %>%
+      count_(c(var_interest, subgroup)) %>%
+      left_join(res, by = c(var_interest, subgroup))
+    
+    res[[subgroup]] <- sprintf(
+      "%s\nn = %s",
+      res[[subgroup]],
+      scales::comma(res$n))
+    
+    p <- filter(res, !is.na(P.Value)) %>%
+      ggplot(aes_string(
+        x = subgroup, y = "Margin",
+        fill = var_interest,
+        label = "Label",
+        ymin = "`Lower CI (90%)`",
+        ymax = "`Upper CI (90%)`"))
+  } else {
+    res <- dat %>%
+      count_(var_interest) %>%
+      left_join(res, by = var_interest)
+    
+    res[[var_interest]] <- sprintf(
+      "%s\nn = %s",
+      res[[var_interest]],
+      scales::comma(res$n))
+    
+    p <- filter(res, !is.na(P.Value)) %>%
+      ggplot(aes_string(
+        x = var_interest, y = "Margin",
+        fill = var_interest,
+        label = "Label",
+        ymin = "`Lower CI (90%)`",
+        ymax = "`Upper CI (90%)`"))
+  }
   
   if(any(is.na(res$P.Value))){
     p <- p + 
@@ -88,7 +140,42 @@ myplot <- function(res){
                          expand = c(0, 0, 0.05, 0)) +
       scale_fill_manual(values = c('#2176d2', '#f3c613'))
   }
+  
+  p <- p + 
+    geom_col(show.legend = F) +
+    geom_errorbar(width = 0.2) +
+    geom_label(fill = "white") + #aes(vjust = ifelse(Margin > 0, -1, 1))) +
+    theme_bw() +
+    theme(text = element_text(size = 16),
+          axis.text = element_text(color = "black")) +
+    labs(x = "")
   p
+}
+
+psr <- function(mod) {
+  # Pseudo-R2
+  mod_null <- update(mod, ~ 1)
+
+  #get log likelihoods for both models
+  ll_full <- as.numeric(logLik(mod))
+  ll_null <- as.numeric(logLik(mod_null))
+
+  # get rank for full model to use in adjusted R2
+  rank_full <- mod$rank
+
+  # check that rank for null model is 1, otherwise throw an error
+  if(mod_null$rank != 1){
+    stop("null model created incorrectly")
+  }
+
+  # calculate mcfaddens r2 and adjusted r2
+  psr <- c(
+    "mcfaddens.R2" = 1 - (ll_full / ll_null), 
+    "mcfaddens.adj.R2" = 1 - ((ll_full - rank_full) / ll_null)
+  ) 
+  
+  print(psr)
+
 }
 ```
 
@@ -100,11 +187,15 @@ rando <- read_csv(file.path("..", "data", "rando.csv"))
 
 # Covariates
 base <- read_csv(file.path("..", "data", "basefile.csv")) %>%
-  # mutate(previously_defaulted = !is.na(default_dt)) %>%
+  mutate(previously_defaulted = factor(ifelse(
+    !is.na(default_dt),
+    "Defaulted before",
+    "Never defaulted"))) %>%
   select(brt, status, agree_start, tier,
          property_zip5, different_mail,
          pct_college, pct_no_hs, pct_non_english,
-         bin_no_hs, bin_college, bin_non_english)
+         bin_no_hs, bin_college, bin_non_english,
+         previously_defaulted)
 
 # Unierse data
 letters <- file.path("..", "data", "mailings") %>%
@@ -142,7 +233,8 @@ dat <- left_join(letters, rando, by = "brt") %>%
   left_join(def, by = "brt") %>%
   left_join(breach, by = "case") %>%
   mutate(defaulted = !is.na(default_date),
-         breached = !is.na(breach_date))
+         breached = !is.na(breach_date),
+         tier = factor(tier, levels = c("4", "3", "2", "1", "Missing")))
 
 # 3 BRTs have multiple case numbers. 
 # If any case breached, consider BRT breached
@@ -177,7 +269,7 @@ treat_table(dat, treat, defaulted) %>%
 covar <- c("tier", "bin_college", "bin_no_hs", "bin_non_english", "different_mail")
 ```
 
-# Analysis
+# Main Analysis
 
 ## Material Breach Rates {.tabset}
 
@@ -191,7 +283,7 @@ eff <- marg(mod, var_interest = "treat", type = "effects", cofint = 0.9)
 ### Level plot
 
 ```{r}
-myplot(lev) +
+myplot(lev, mod$model) +
   labs(title = "Material Breach",
        y = "Material Breach Rate")
 ```
@@ -199,7 +291,7 @@ myplot(lev) +
 ### Effect plot
 
 ```{r}
-myplot(eff) +
+myplot(eff, mod$model) +
   labs(title = "Material Breach",
        y = "Effect of Letter on Material Breach Rate")
 ```
@@ -214,7 +306,11 @@ mytab(lev, eff) %>% knitr::kable()
 
 ```{r}
 f
-summary(mod)
+broom::tidy(mod) %>%
+  as_data_frame() %>%
+  mutate(p.value = round(p.value, 3))
+broom::glance(mod)
+psr(mod)
 ```
 
 ## Default Rates {.tabset}
@@ -229,7 +325,7 @@ eff <- marg(mod, var_interest = "treat", type = "effects", cofint = 0.9)
 ### Level plot
 
 ```{r}
-myplot(lev) +
+myplot(lev, mod$model) +
   labs(title = "Defaults",
        y = "Default Rate")
 ```
@@ -237,7 +333,7 @@ myplot(lev) +
 ### Effect plot
 
 ```{r}
-myplot(eff) +
+myplot(eff, mod$model) +
   labs(title = "Defaults",
        y = "Effect of Letter on Default Rate")
 ```
@@ -252,5 +348,182 @@ mytab(lev, eff) %>% knitr::kable()
 
 ```{r}
 f
-summary(mod)
+broom::tidy(mod) %>%
+  as_data_frame() %>%
+  mutate(p.value = round(p.value, 3))
+broom::glance(mod)
+psr(mod)
 ```
+
+# Subgroup Analysis
+
+## Tier
+
+```{r}
+subgroup <- "tier"
+```
+
+### Material Breach rates {.tabset}
+
+```{r}
+f <- as.formula(sprintf(
+  "breached ~ treat * %s + %s",
+  subgroup, 
+  paste(covar[covar != subgroup], collapse = " + ")))
+
+mod <- glm(f, family = binomial(link = "logit"), data = dat)
+lev <- sub_marg(mod, subgroup, type = "levels")
+eff <- sub_marg(mod, subgroup, type = "effects")
+```
+
+#### Plot
+
+```{r}
+myplot(eff, mod$model) + labs(
+  title = "Change in Material Breach rate\nby OOPA tier", 
+  x = "OOPA Tier",
+  y = "Effect of New Letter on Material Breach Rate")
+```
+
+#### Table
+
+```{r}
+mytab(lev, eff) %>% knitr::kable()
+```
+
+#### Regression
+
+```{r}
+f
+broom::tidy(mod) %>%
+  as_data_frame() %>%
+  mutate(p.value = round(p.value, 3))
+broom::glance(mod)
+psr(mod)
+```
+
+
+### Default rates {.tabset}
+
+```{r}
+f <- as.formula(sprintf(
+  "defaulted ~ treat * %s + %s",
+  subgroup, 
+  paste(covar[covar != subgroup], collapse = " + ")))
+
+mod <- glm(f, family = binomial(link = "logit"), data = dat)
+lev <- sub_marg(mod, subgroup, type = "levels")
+eff <- sub_marg(mod, subgroup, type = "effects")
+```
+
+#### Plot
+
+```{r}
+myplot(eff, mod$model) + labs(
+  title = "Change in default rate\nby OOPA tier", 
+  x = "OOPA Tier",
+  y = "Effect of New Letter on Default Rate")
+```
+
+#### Table
+
+```{r}
+mytab(lev, eff) %>% knitr::kable()
+```
+
+#### Regression
+
+```{r}
+f
+broom::tidy(mod) %>%
+  as_data_frame() %>%
+  mutate(p.value = round(p.value, 3))
+broom::glance(mod)
+psr(mod)
+```
+
+## Previously Defaulted
+
+```{r}
+subgroup <- "previously_defaulted"
+```
+
+### Material Breach rates {.tabset}
+
+```{r}
+f <- as.formula(sprintf(
+  "breached ~ treat * %s + %s",
+  subgroup, 
+  paste(covar[covar != subgroup], collapse = " + ")))
+
+mod <- glm(f, family = binomial(link = "logit"), data = dat)
+lev <- sub_marg(mod, subgroup, type = "levels")
+eff <- sub_marg(mod, subgroup, type = "effects")
+```
+
+#### Plot
+
+```{r}
+myplot(eff, mod$model) + labs(
+  title = "Change in Material Breach rate\nby OOPA tier", 
+  x = "OOPA Tier",
+  y = "Effect of New Letter on Material Breach Rate")
+```
+
+#### Table
+
+```{r}
+mytab(lev, eff) %>% knitr::kable()
+```
+
+#### Regression
+
+```{r}
+f
+broom::tidy(mod) %>%
+  as_data_frame() %>%
+  mutate(p.value = round(p.value, 3))
+broom::glance(mod)
+psr(mod)
+```
+
+### Default rates {.tabset}
+
+```{r}
+f <- as.formula(sprintf(
+  "defaulted ~ treat * %s + %s",
+  subgroup, 
+  paste(covar[covar != subgroup], collapse = " + ")))
+
+mod <- glm(f, family = binomial(link = "logit"), data = dat)
+lev <- sub_marg(mod, subgroup, type = "levels")
+eff <- sub_marg(mod, subgroup, type = "effects")
+```
+
+#### Plot
+
+```{r}
+myplot(eff, mod$model) + labs(
+  title = "Change in default rate\nby OOPA tier", 
+  x = "OOPA Tier",
+  y = "Effect of New Letter on Default Rate")
+```
+
+#### Table
+
+```{r}
+mytab(lev, eff) %>% knitr::kable()
+```
+
+#### Regression
+
+```{r}
+f
+broom::tidy(mod) %>%
+  as_data_frame() %>%
+  mutate(p.value = round(p.value, 3))
+broom::glance(mod)
+psr(mod)
+```
+
+
